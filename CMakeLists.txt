@@ -5,10 +5,10 @@
 cmake_minimum_required (VERSION 3.25)
 
 # Define the application name and version.
-project (app-template
+project (fMINdex
          LANGUAGES CXX
          VERSION 1.0.0
-         DESCRIPTION "My application description"
+         DESCRIPTION "combine FM-Index and Minimizers"
 )
 
 # This allows including `*.cmake` files from the `cmake` directory without specifying the full path.
