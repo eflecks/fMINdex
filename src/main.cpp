@@ -27,10 +27,36 @@
 #include <fstream>
 #include <iomanip>
 
-int const window_size = 20;
-int const kmer_length = 4;
+
 constexpr size_t Sigma_unmin = 6;
-constexpr size_t Sigma_min = 150;
+constexpr size_t Sigma_min = 256;
+
+std::string dir = "/storage/mi/eflecks/fMINdex/";
+
+
+void write_stats_file(std::string filename, int const window_size, int const kmer_length, size_t const hits_unminimized, size_t const hits_minimized, auto const time_unminimized, auto const time_minimized) {
+    std::ofstream outfile;
+    
+    std::ifstream f(filename);
+    if (f.good()) { // if file exists - append
+        outfile.open(filename, std::ios_base::app); // append instead of overwrite
+        outfile << window_size << "," << kmer_length << ","
+                << hits_unminimized << "," << hits_unminimized << "," 
+                << time_unminimized << "," << time_minimized << "\n";
+    } else { // if file doesn't exist - create, make header
+        outfile.open(filename);
+        outfile << "window_size" << "," << "kmer_length" << ","
+                << "hits_unminimized" << "," << "hits_unminimized" << "," 
+                << "time_unminimized" << "," << "time_minimized" << "\n\n";
+        outfile << window_size << "," << kmer_length << ","
+                << hits_unminimized << "," << hits_minimized << "," 
+                << time_unminimized << "," << time_minimized << "\n";
+
+    }
+    // todo: stats like map size, db size
+    
+}
+
 
 
 
@@ -54,7 +80,7 @@ std::vector<seqan3::dna5_vector> read_fasta(std::string const filename){
 
 
 // minimize text, fill hash map
-std::vector<uint8_t> min_make_map(seqan3::dna5_vector const &input, std::unordered_map<size_t, uint8_t> &map) {
+std::vector<uint8_t> min_make_map(seqan3::dna5_vector const &input, std::unordered_map<size_t, uint8_t> &map, int const kmer_length, int const window_size) {
     
     auto minimized = input | seqan3::views::minimiser_hash(seqan3::shape{seqan3::ungapped{kmer_length}}, seqan3::window_size{window_size});
 
@@ -66,8 +92,8 @@ std::vector<uint8_t> min_make_map(seqan3::dna5_vector const &input, std::unorder
 
         auto find = map.find(item);
         if (find==map.end()) {
-            if (map.size() >= 255) {
-                throw std::runtime_error("too many different minimizers");
+            if (map.size() >= Sigma_min) {
+                throw std::runtime_error("too many different minimizers, adjust k, w or Sigma");
             }
             map.insert({item, map.size()+1});
             result.push_back(map.size());
@@ -83,7 +109,7 @@ std::vector<uint8_t> min_make_map(seqan3::dna5_vector const &input, std::unorder
 
 
 // minimize query, use given hashmap
-std::vector<uint8_t> min_use_map(seqan3::dna5_vector const &query, std::unordered_map<size_t, uint8_t> const &map) {
+std::vector<uint8_t> min_use_map(seqan3::dna5_vector const &query, std::unordered_map<size_t, uint8_t> const &map, int const kmer_length, int const window_size) {
         
     auto minimized = query | seqan3::views::minimiser_hash(seqan3::shape{seqan3::ungapped{kmer_length}}, seqan3::window_size{window_size});
     
@@ -103,7 +129,7 @@ std::vector<uint8_t> min_use_map(seqan3::dna5_vector const &query, std::unordere
 
 
 // minimize entire databank (fasta file) with multiple sequences
-std::vector<std::vector<uint8_t>> minimise_db(std::string const filename){
+std::vector<std::vector<uint8_t>> minimise_db(std::string const filename, int const kmer_length, int const window_size){
     
     std::vector<seqan3::dna5_vector> input = read_fasta(filename);
     std::unordered_map<size_t, uint8_t> map{};
@@ -111,7 +137,7 @@ std::vector<std::vector<uint8_t>> minimise_db(std::string const filename){
 
     seqan3::debug_stream << std::left << std::setw(30) << "minimizing database";
     for (seqan3::dna5_vector sequence : input){
-        std::vector<uint8_t> minseq = min_make_map(sequence, map);
+        std::vector<uint8_t> minseq = min_make_map(sequence, map, kmer_length, window_size);
         result.push_back(minseq);
     }
 
@@ -131,21 +157,21 @@ std::vector<std::vector<uint8_t>> minimise_db(std::string const filename){
 
 
 // minimize all queries (from fasta file)
-std::vector<std::vector<uint8_t>> minimise_queries(std::string const filename){
+std::vector<std::vector<uint8_t>> minimise_queries(std::string const filename, int const kmer_length, int const window_size){
     
     // load map from file
     auto ifs     = std::ifstream("/storage/mi/eflecks/fMINdex/map", std::ios::binary);
     auto archive = cereal::BinaryInputArchive{ifs};
     auto map = std::unordered_map<size_t, uint8_t>{};
     archive(map);
-    seqan3::debug_stream << "map   " << map << "\n";
+    //seqan3::debug_stream << "map   " << map << "\n";
 
     std::vector<seqan3::dna5_vector> queries = read_fasta(filename);
     std::vector<std::vector<uint8_t>> result{};
 
     seqan3::debug_stream << std::left << std::setw(30) << "minimizing queries";
     for (seqan3::dna5_vector query : queries){
-        std::vector<uint8_t> minq = min_use_map(query, map);
+        std::vector<uint8_t> minq = min_use_map(query, map, kmer_length, window_size);
         result.push_back(minq);
     }
 
@@ -174,6 +200,11 @@ std::vector<std::vector<uint8_t>> to_uint8_t(std::vector<seqan3::dna5_vector> co
 
     return result;
 }
+
+
+
+
+
 
 template <size_t TSigma>
 void get_fmindex(std::vector<std::vector<uint8_t>> const& sequences, std::string const filename){
@@ -208,7 +239,7 @@ std::vector<int> fmindex_search( std::vector<std::vector<uint8_t>> const& querie
     // load index from file
     seqan3::debug_stream << std::left << std::setw(30) << "loading index from file";
     
-    auto ifs     = std::ifstream("/storage/mi/eflecks/fMINdex/" + filename, std::ios::binary);
+    auto ifs     = std::ifstream(dir + filename, std::ios::binary);
     auto archive = cereal::BinaryInputArchive{ifs};
     auto index = fmindex_collection::FMIndex<Table>{};
     archive(index);
@@ -226,11 +257,12 @@ std::vector<int> fmindex_search( std::vector<std::vector<uint8_t>> const& querie
         }
 
         auto cursor = fmindex_collection::search_no_errors::search(index, queries[queryId]);
-        seqan3::debug_stream << "found something " << queryId << " " << cursor.count() << "\n";
-        for (auto i : cursor) {
+        //seqan3::debug_stream << "found something " << queryId << " " << cursor.count() << "\n";
+        /*for (auto i : cursor) {
             auto [chr, pos] = index.locate(i);
             //seqan3::debug_stream << "chr/pos: "<< chr << " " << pos << "\n";
-        } // note: bitvector w/ select capabilities needed to get back to original positions from minimizer,
+        }*/ 
+        // note: bitvector w/ select capabilities needed to get back to original positions from minimizer,
         // select call would count towards time eval
         
 
@@ -242,23 +274,43 @@ std::vector<int> fmindex_search( std::vector<std::vector<uint8_t>> const& querie
 }
 
 
+
+
+
+
+
 int main(int argc, char ** argv)
 {   
     // parser
     sharg::parser parser{"minimize", argc, argv};
-    // flags for minimizing/not minimizing
-    bool minimize{false};
-    parser.add_flag(minimize, sharg::config{.short_id = 'm', .long_id = "min", .description = "minimize before constructing fmindex"});
     
+    // flag for minimizing
+    bool minimize{false};
+    parser.add_flag(minimize, sharg::config{.short_id = 'm', .long_id = "minimize", .description = "minimize before constructing fmindex"});
+    
+    // flag to run full test
     bool test{false};
-    parser.add_flag(test, sharg::config{.short_id = 't', .long_id = "test", .description = "run comparison test"});
+    parser.add_flag(test, sharg::config{.short_id = 't', .long_id = "test", .description = "run full test: generate fm-index on minimizers and unminimized database and compare"});
+    
+    // flag to generate fm-index instead of reading it from file
+    bool generate{false};
+    parser.add_flag(minimize, sharg::config{.short_id = 'g', .long_id = "generate", .description = "generate fm-index new instead of reading from file, should it exist. If the index file does not exist the index will be generated in any case."});
 
+    // file inputs
     std::string db_filename{};
-    parser.add_option(db_filename, sharg::config{.short_id = 'd', .long_id = "database", .description = "filename of database, don't specify to not construct fm-Index"});
+    parser.add_positional_option(db_filename, sharg::config{.description = "database file (FASTA)"});
+    //parser.add_option(db_filename, sharg::config{.short_id = 'd', .long_id = "database", .description = "filename of database, don't specify to not construct fm-Index"});
     std::string search_filename{};
-    parser.add_option(search_filename, sharg::config{.short_id = 'q', .long_id = "queries", .description = "filename for queries, leave empty/don't specify for no search"});
+    parser.add_positional_option(search_filename, sharg::config{.description = "query file (FASTA)"});
+    //parser.add_option(search_filename, sharg::config{.short_id = 'q', .long_id = "queries", .description = "filename for queries, leave empty/don't specify for no search"});
 
-    //parser.add_positional_option();
+    // window size and kmer 
+    int window_size{};
+    parser.add_positional_option(window_size, sharg::config{.description = "window size the minimizer uses"});
+    int kmer_length{};
+    parser.add_positional_option(kmer_length, sharg::config{.description = "kmer length for minimizer"});
+
+
 
     try
     {
@@ -284,9 +336,13 @@ int main(int argc, char ** argv)
         // run without minimizer
         seqan3::debug_stream << "\n########     without minimizers     ########\n";
         // get fm index
-        auto sequences = read_fasta(db_filename);
-        auto seqs = to_uint8_t(sequences);
-        get_fmindex<Sigma_unmin>(seqs, db_filename + "_index");
+        std::ifstream f(dir + db_filename);
+        if (!f.good() || generate) { // if index isn't saved or generate flag is set to true
+            auto sequences = read_fasta(db_filename);
+            auto seqs = to_uint8_t(sequences);
+            get_fmindex<Sigma_unmin>(seqs, db_filename + "_index");
+        }
+        
 
         // search queries
         auto queries = read_fasta(search_filename);
@@ -302,12 +358,13 @@ int main(int argc, char ** argv)
         // run with minimizer
         seqan3::debug_stream << "\n########      with  minimizers      ########\n";
         // minimize db, create fm index
-        auto minseqs = minimise_db(db_filename);
+        auto minseqs = minimise_db(db_filename, kmer_length, window_size);
         get_fmindex<Sigma_min>(minseqs, db_filename + "_mindex");
+        // no generate flag since minimizer window size & kmer length will be changed frequently
         
         // minimize & search queries
-        auto minqs = minimise_queries(search_filename);
-        seqan3::debug_stream << minqs << "\n\n";
+        auto minqs = minimise_queries(search_filename, kmer_length, window_size);
+        //seqan3::debug_stream << minqs << "\n\n";
         
         auto before_minimized_search = std::chrono::high_resolution_clock::now();
         std::vector<int> mincounts = fmindex_search<Sigma_min>(minqs, db_filename + "_mindex");
@@ -318,26 +375,30 @@ int main(int argc, char ** argv)
 
 
         // compare search time
-        auto ms_unminimized_search = std::chrono::duration_cast<std::chrono::microseconds>(after_unminimized_search - before_unminimized_search);
-        seqan3::debug_stream << "time for unminimized search: " << ms_unminimized_search.count() << "microseconds\n";
-        auto ms_minimized_search = std::chrono::duration_cast<std::chrono::microseconds>(after_minimized_search - before_minimized_search);
-        seqan3::debug_stream << "time for minimized search:   " << ms_minimized_search.count() << "microseconds\n";
+        auto ms_unminimized_search = std::chrono::duration_cast<std::chrono::milliseconds>(after_unminimized_search - before_unminimized_search);
+        seqan3::debug_stream << "time for unminimized search: " << ms_unminimized_search.count() << "ms\n";
+        auto ms_minimized_search = std::chrono::duration_cast<std::chrono::milliseconds>(after_minimized_search - before_minimized_search);
+        seqan3::debug_stream << "time for minimized search:   " << ms_minimized_search.count() << "ms\n";
+
 
 
         // compare # of hits (FP)
         size_t count_unmin = 0;
         size_t count_min = 0;
-        for (int i=0; i<counts.size(); i++) {
+        for (long unsigned int i=0; i<counts.size(); i++) {
             count_unmin += counts[i];
             count_min += mincounts[i];
-            seqan3::debug_stream << "query " << i << " - " << counts[i] << " vs " << mincounts[i] << "\n";
+            //seqan3::debug_stream << "query " << i << " - " << counts[i] << " vs " << mincounts[i] << "\n";
         }
         seqan3::debug_stream << "# hits unminimized: " << count_unmin << "\n";
         seqan3::debug_stream << "# hits minimized:   " << count_min << "\n";
         seqan3::debug_stream << "# FP:               " << count_min - count_unmin << "\n";
 
 
-
+        write_stats_file("/storage/mi/eflecks/fMINdex/stats.csv",
+                        window_size, kmer_length, 
+                        count_unmin, count_min, 
+                        ms_unminimized_search.count(), ms_minimized_search.count());
 
 
 
@@ -376,7 +437,7 @@ int main(int argc, char ** argv)
 
         // get fm index
         if (db_filename.length()>0) {
-            auto minseqs = minimise_db(db_filename);
+            auto minseqs = minimise_db(db_filename, kmer_length, window_size);
             
             
 
@@ -391,7 +452,7 @@ int main(int argc, char ** argv)
     
         // search
         if (search_filename.length()>0) {
-            auto minqs = minimise_queries(search_filename);
+            auto minqs = minimise_queries(search_filename, kmer_length, window_size);
             seqan3::debug_stream << "searching queries\n";
             fmindex_search<Sigma_min>(minqs, "test_mindex");
         }
