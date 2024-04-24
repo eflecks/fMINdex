@@ -35,7 +35,7 @@ constexpr size_t Sigma_min = 6;
 std::string dir = "/storage/mi/eflecks/fMINdex/";
 
 
-void write_stats_file(std::string filename, int const window_size, int const kmer_length, size_t const hits_unminimized, size_t const hits_minimized, auto const time_unminimized, auto const time_minimized, unsigned int const db_size_minimized, unsigned int const query_size_minimized) {
+void write_stats_file(std::string filename, int const window_size, int const kmer_length, size_t const hits_unminimized, size_t const hits_minimized, auto const time_unminimized, auto const time_minimized, uint64_t const db_size_minimized, uint64_t const query_size_minimized) {
     std::ofstream outfile;
     
     std::ifstream f(dir + filename);
@@ -69,7 +69,7 @@ std::tuple<std::vector<seqan3::dna5_vector>, unsigned int> read_fasta(std::strin
 
     seqan3::debug_stream << std::left << std::setw(30) << "loading" << filename;
 
-    unsigned int sum = 0;
+    uint64_t sum = 0;
     
     seqan3::sequence_file_input file_input{dir + filename}; // contains multiple sequences
     std::vector<seqan3::dna5_vector> dna_vector{}; // vector of sequences
@@ -93,11 +93,11 @@ std::tuple<std::vector<seqan3::dna5_vector>, unsigned int> read_fasta(std::strin
 
 
 
-std::vector<uint8_t> to_base_5(auto input) {
+std::vector<uint8_t> to_base_5(auto input, size_t k) {
 
     std::vector<uint8_t> output;
     
-    while (input > 0) {
+    while (output.size() < k) {
         output.push_back(input % 5 + 1);
         input = input / 5;
     }
@@ -119,9 +119,9 @@ std::vector<uint8_t> min_make_map(seqan3::dna5_vector const &input, std::unorder
     uint64_t seed = 0x8F3F73B5CF1C9ADE; // The default seed from minimiser_hash
     // Use XOR on all minimiser values
     auto hash_values = minimized | std::views::transform(
-                           [seed](uint64_t i)
+                           [&](uint64_t i)
                            {
-                               return to_base_5(i ^ seed);
+                               return to_base_5(i ^ seed, kmer_length);
                            });
 
     std::vector<uint8_t> result{};
@@ -176,9 +176,9 @@ std::vector<uint8_t> min_use_map(seqan3::dna5_vector const &query, std::unordere
     uint64_t seed = 0x8F3F73B5CF1C9ADE; // The default seed from minimiser_hash
     // Use XOR on all minimiser values
     auto hash_values = minimized | std::views::transform(
-                           [seed](uint64_t i)
+                           [&](uint64_t i)
                            {
-                               return to_base_5(i ^ seed);
+                               return to_base_5(i ^ seed, kmer_length);
                            });
 
     std::vector<uint8_t> result{};
@@ -203,7 +203,7 @@ std::tuple<std::vector<std::vector<uint8_t>>, unsigned int> minimise_db(std::str
     seqan3::debug_stream << std::left << std::setw(30) << "minimizing database";
 
 
-    unsigned int sum = 0;
+    uint64_t sum = 0;
     std::vector<uint8_t> minseq{};
 
     for (seqan3::dna5_vector sequence : input){
@@ -250,7 +250,7 @@ std::tuple<std::vector<std::vector<uint8_t>>, unsigned int> minimise_queries(std
 
     seqan3::debug_stream << std::left << std::setw(30) << "minimizing queries";
 
-    unsigned int sum = 0;
+    uint64_t sum = 0;
     std::vector<uint8_t> minq{};
     for (seqan3::dna5_vector query : queries){
         //minq.clear();
@@ -311,7 +311,7 @@ template <size_t TSigma>
 void get_fmindex(std::vector<std::vector<uint8_t>> const& sequences, std::string const filename){
     using Table = fmindex_collection::occtable::Interleaved_16<6>;
 
-    unsigned int sum{0};
+    uint64_t sum{0};
     for (auto seq : sequences) sum += seq.size();
 
     seqan3::debug_stream << sequences.size() << " sequences   " << sum << " bases\n";
@@ -324,7 +324,7 @@ void get_fmindex(std::vector<std::vector<uint8_t>> const& sequences, std::string
 
     // get fmindex
     seqan3::debug_stream << std::left << std::setw(30) << "generating fm-index";
-    auto index = fmindex_collection::FMIndex<Table>{sequences, /*samplingRate*/16, /*threadNbr*/20};
+    auto index = fmindex_collection::FMIndex<Table>{sequences, /*samplingRate*/16, /*threadNbr*/32};
     seqan3::debug_stream << "-" << std::right << std::setw(10) << "DONE\n";
     
     seqan3::debug_stream << "FMindex size: " << index.size() << "\n";
@@ -343,7 +343,7 @@ void get_fmindex(std::vector<std::vector<uint8_t>> const& sequences, std::string
 
 
 template<size_t Sigma>
-std::tuple<std::vector<int>, std::chrono::duration<long int, std::ratio<1,1000>>> fmindex_search( std::vector<std::vector<uint8_t>> const& queries, std::string const filename){
+std::tuple<std::vector<uint64_t>, std::chrono::duration<long int, std::ratio<1,1000>>> fmindex_search( std::vector<std::vector<uint8_t>> const& queries, std::string const filename){
     using Table = fmindex_collection::occtable::Interleaved_16<6>;
 
     // load index from file
@@ -360,7 +360,7 @@ std::tuple<std::vector<int>, std::chrono::duration<long int, std::ratio<1,1000>>
 
     // search
     std::vector<std::chrono::milliseconds> search_times{};
-    std::vector<int> counts{};
+    std::vector<uint64_t> counts{};
     for(int i=0; i<5; i++) {
         auto before_minimized_search = std::chrono::high_resolution_clock::now();
 
@@ -389,6 +389,7 @@ std::tuple<std::vector<int>, std::chrono::duration<long int, std::ratio<1,1000>>
         
         auto after_minimized_search = std::chrono::high_resolution_clock::now();
         auto time = std::chrono::duration_cast<std::chrono::milliseconds>(after_minimized_search - before_minimized_search);
+        seqan3::debug_stream << time << "\n";
         search_times.push_back(time);
     }
     
@@ -423,7 +424,7 @@ int main(int argc, char ** argv)
     
     // flag to generate fm-index instead of reading it from file
     bool generate{false};
-    parser.add_flag(minimize, sharg::config{.short_id = 'g', .long_id = "generate", .description = "generate fm-index new instead of reading from file, should it exist. If the index file does not exist the index will be generated in any case."});
+    parser.add_flag(generate, sharg::config{.short_id = 'g', .long_id = "generate", .description = "generate fm-index new instead of reading from file, should it exist. If the index file does not exist the index will be generated in any case."});
 
     // file inputs
     std::string db_filename{};
